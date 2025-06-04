@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
-import logging, os
-from .trade import open_market_position, place_laddered_take_profits
+import logging
+from .trade import open_market_position, place_laddered_take_profits, get_mark_price
 from .config import WEBHOOK_SECRET
 
 app = Flask(__name__)
@@ -26,23 +26,37 @@ def webhook():
     data = request.json
     symbol = data.get("ticker")
     direction = data.get("direction")
-    qty = float(data.get("qty", 0.01))
+    percent = float(data.get("percent", 0.05))  # Allow override for position size percent
+
+    # Optional: accept ladder/TP/SL details or use default
     tp_percents = data.get("tp_targets", [1.01, 1.02, 1.04])
     sl_percent = data.get("sl", 0.99)
-    entry_price = float(data.get("entry_price", 0))  # Should fetch real market price if not supplied
+    entry_price = float(data.get("entry_price")) if data.get("entry_price") else get_mark_price(symbol)
 
     try:
         if direction in ["open_long", "open_short"]:
             side = "Buy" if direction == "open_long" else "Sell"
-            open_market_position(symbol, side, qty,
-                                 take_profit=entry_price*tp_percents[0] if entry_price else None,
-                                 stop_loss=entry_price*sl_percent if entry_price else None)
-            if entry_price:
-                place_laddered_take_profits(symbol, side, qty, entry_price, tp_percents)
+            tp_price = entry_price * tp_percents[0] if tp_percents else None
+            sl_price = entry_price * sl_percent if sl_percent else None
+
+            open_market_position(
+                symbol,
+                side,
+                take_profit=tp_price,
+                stop_loss=sl_price,
+                percent=percent
+            )
+            place_laddered_take_profits(
+                symbol,
+                side,
+                entry_price,
+                tp_percents,
+                percent=percent
+            )
         elif direction in ["close_long", "close_short"]:
-            # Place a reduceOnly market order in the opposite direction
+            # Close by sending reduceOnly market order in opposite direction, use same percent sizing
             side = "Sell" if direction == "close_long" else "Buy"
-            open_market_position(symbol, side, qty)
+            open_market_position(symbol, side, percent=percent)
         else:
             return jsonify({'error': 'unknown direction'}), 400
         return jsonify({'status': 'ok'}), 200
