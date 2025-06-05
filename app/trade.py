@@ -1,96 +1,80 @@
-from .bybit_api import bybit_request
+import os
 import logging
-import math
+import requests
+from dotenv import load_dotenv
 
-def get_account_equity(coin="USDT"):
-    r = bybit_request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"}, is_private=True)
-    wallets = r['result']['list'][0]['coin']
-    for w in wallets:
-        if w['coin'] == coin:
-            return float(w['equity'])
-    raise Exception(f"Coin {coin} not found in wallet.")
+# Load environment variables
+load_dotenv()
 
-def get_symbol_precision(symbol):
-    r = bybit_request("GET", "/v5/market/instruments-info", {"category": "linear", "symbol": symbol})
-    info = r['result']['list'][0]
-    qty_step = float(info['lotSizeFilter']['qtyStep'])
-    # Calculate decimal precision from step size
-    qty_prec = abs(int(math.log10(qty_step))) if qty_step < 1 else 0
-    return qty_step, qty_prec
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def get_mark_price(symbol):
-    r = bybit_request("GET", "/v5/market/tickers", {"category": "linear", "symbol": symbol})
-    return float(r['result']['list'][0]['markPrice'])
+# Constants
+API_KEY = os.getenv('BYBIT_API_KEY')
+API_SECRET = os.getenv('BYBIT_API_SECRET')
+PASSPHRASE = os.getenv('WEBHOOK_PASSPHRASE')
 
-def calculate_position_qty(symbol, percent=0.05):
-    equity = get_account_equity()
-    price = get_mark_price(symbol)
-    usd_amt = equity * percent
-    qty_step, qty_prec = get_symbol_precision(symbol)
-    raw_qty = usd_amt / price
-    # Round down to nearest allowed step
-    qty = raw_qty - (raw_qty % qty_step)
-    return round(qty, qty_prec)
+# Placeholder for Bybit API client initialization
+# Replace with actual Bybit API client
+class BybitClient:
+    def __init__(self, api_key, api_secret):
+        pass  # Initialize the client
 
-def open_market_position(symbol, side, take_profit=None, stop_loss=None, percent=0.05):
-    qty = calculate_position_qty(symbol, percent=percent)
-    if qty <= 0:
-        raise Exception("Calculated quantity is zero or less!")
-    payload = {
-        "category": "linear",
-        "symbol": symbol,
-        "side": side,  # "Buy" or "Sell"
-        "orderType": "Market",
-        "qty": str(qty),
-        "timeInForce": "GTC"
-    }
-    if take_profit:
-        payload["takeProfit"] = str(take_profit)
-        payload["tpTriggerBy"] = "LastPrice"
-    if stop_loss:
-        payload["stopLoss"] = str(stop_loss)
-        payload["slTriggerBy"] = "LastPrice"
-    logging.info(f"Submitting order: {payload}")
-    return bybit_request("POST", "/v5/order/create", payload, is_private=True)
+    def get_total_balance(self):
+        # Implement API call to fetch total balance
+        return 10000  # Example balance
 
-def place_laddered_take_profits(symbol, side, entry_price, tp_targets, percent=0.05):
-    qty = calculate_position_qty(symbol, percent=percent)
-    if qty <= 0:
-        raise Exception("Calculated quantity is zero or less for laddered TP!")
-    qty_step, qty_prec = get_symbol_precision(symbol)
-    num_targets = len(tp_targets)
-    qty_per_tp = round(qty / num_targets, qty_prec)
-    for tp_mult in tp_targets:
-        tp_price = round(entry_price * tp_mult, 2)
-        payload = {
-            "category": "linear",
-            "symbol": symbol,
-            "side": "Sell" if side == "Buy" else "Buy",
-            "orderType": "Limit",
-            "qty": str(qty_per_tp),
-            "price": str(tp_price),
-            "timeInForce": "GTC",
-            "reduceOnly": True
-        }
-        try:
-            logging.info(f"Placing laddered TP: {payload}")
-            bybit_request("POST", "/v5/order/create", payload, is_private=True)
-        except Exception as e:
-            logging.error(f"Laddered TP error for {symbol} at {tp_price}: {e}")
+    def place_market_order(self, symbol, side, quantity):
+        # Implement API call to place market order
+        logger.info(f"Placed {side} market order for {quantity} {symbol}")
 
-def set_trailing_stop(symbol, side, activation_price, callback_rate, percent=0.05):
-    qty = calculate_position_qty(symbol, percent=percent)
-    if qty <= 0:
-        raise Exception("Calculated quantity is zero or less for trailing stop!")
-    payload = {
-        "category": "linear",
-        "symbol": symbol,
-        "side": "Sell" if side == "Buy" else "Buy",
-        "orderType": "TrailingStopMarket",
-        "qty": str(qty),
-        "activationPrice": str(activation_price),
-        "callbackRate": str(callback_rate),
-        "reduceOnly": True
-    }
-    logging.info(f"Setting trailing stop: {payload}")
-    return bybit_request("POST", "/v5/order/create", payload, is_private=True)
+    def place_limit_order(self, symbol, side, quantity, price):
+        # Implement API call to place limit order
+        logger.info(f"Placed {side} limit order for {quantity} {symbol} at {price}")
+
+    def set_trailing_stop(self, symbol, side, quantity, activation_price, callback_rate):
+        # Implement API call to set trailing stop
+        logger.info(f"Set trailing stop for {side} {symbol} at activation price {activation_price} with callback rate {callback_rate}%")
+
+# Initialize Bybit client
+client = BybitClient(API_KEY, API_SECRET)
+
+def verify_passphrase(received_passphrase):
+    return received_passphrase == PASSPHRASE
+
+def calculate_position_size(symbol):
+    total_balance = client.get_total_balance()
+    position_size_usd = total_balance * 0.05  # 5% of total balance
+    current_price = get_current_price(symbol)
+    quantity = position_size_usd / current_price
+    return round(quantity, 3)  # Adjust precision as needed
+
+def get_current_price(symbol):
+    # Implement API call to fetch current market price
+    return 50000  # Example price
+
+def place_take_profit_orders(symbol, side, quantity, entry_price):
+    tp_levels = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]  # 5% to 30%
+    tp_quantity = quantity / len(tp_levels)
+    for level in tp_levels:
+        tp_price = entry_price * (1 + level) if side == 'Buy' else entry_price * (1 - level)
+        client.place_limit_order(symbol, 'Sell' if side == 'Buy' else 'Buy', tp_quantity, round(tp_price, 2))
+
+def place_stop_loss_order(symbol, side, quantity, entry_price):
+    sl_price = entry_price * 0.95 if side == 'Buy' else entry_price * 1.05
+    client.place_limit_order(symbol, 'Sell' if side == 'Buy' else 'Buy', quantity, round(sl_price, 2))
+
+def set_trailing_stop(symbol, side, quantity, entry_price):
+    activation_price = entry_price * 1.10 if side == 'Buy' else entry_price * 0.90
+    callback_rate = 10  # 10%
+    client.set_trailing_stop(symbol, side, quantity, round(activation_price, 2), callback_rate)
+
+def execute_trade(symbol, direction):
+    side = 'Buy' if direction == 'OpenLong' else 'Sell'
+    quantity = calculate_position_size(symbol)
+    entry_price = get_current_price(symbol)
+    client.place_market_order(symbol, side, quantity)
+    place_take_profit_orders(symbol, side, quantity, entry_price)
+    place_stop_loss_order(symbol, side, quantity, entry_price)
+    set_trailing_stop(symbol, side, quantity, entry_price)
